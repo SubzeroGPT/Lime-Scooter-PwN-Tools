@@ -1,0 +1,176 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LimeWire PwN3R v1</title>
+  <style>
+    body {
+      background-color: black;
+      color: lime;
+      font-family: monospace;
+      padding: 20px;
+    }
+    #console {
+      white-space: pre-wrap;
+      font-size: 1em;
+      border: 1px solid lime;
+      padding: 15px;
+      margin-top: 20px;
+      height: 300px;
+      overflow-y: scroll;
+      background-color: #000;
+    }
+    button {
+      background-color: lime;
+      color: black;
+      border: none;
+      padding: 10px 20px;
+      margin-top: 10px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    video, canvas, input {
+      margin-top: 20px;
+      width: 100%;
+      max-width: 400px;
+      border: 1px solid lime;
+    }
+  </style>
+</head>
+<body>
+  <h1>LimeWire PwN3R v1</h1>
+  <p>Universal BLE Unlocker, QR Cracker, Firmware Dumper & Injector</p>
+  <button onclick="startScan()">Start BLE Scan</button>
+  <button onclick="startCamera()">Scan QR/Barcode</button>
+  <button onclick="dumpFirmware()">Dump Firmware</button>
+  <input type="file" id="firmwareFile" accept=".bin,.hex" onchange="uploadFirmware()" />
+  <button onclick="injectFirmware()">Inject Firmware</button>
+  <div id="console"></div>
+  <video id="video" autoplay></video>
+  <canvas id="canvas" hidden></canvas>  <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>  <script>
+    const consoleDiv = document.getElementById('console');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+    let firmwareData = null;
+
+    function log(message) {
+      consoleDiv.textContent += `\n${message}`;
+      consoleDiv.scrollTop = consoleDiv.scrollHeight;
+    }
+
+    async function startScan() {
+      log('[+] Starting BLE scan...');
+      if (!navigator.bluetooth) {
+        log('[-] Web Bluetooth API not supported in this browser.');
+        return;
+      }
+
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ['battery_service', 'device_information']
+        });
+        log(`[!] Detected device: ${device.name || 'Unnamed'} (${device.id})`);
+        const server = await device.gatt.connect();
+        log('[+] Connected. Ready for interaction.');
+      } catch (err) {
+        log(`[!] Error: ${err.message}`);
+      }
+    }
+
+    function startCamera() {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(stream => {
+          video.srcObject = stream;
+          log('[+] Camera activated. Point at Lime/Bird QR code.');
+          scanFrame();
+        })
+        .catch(err => log(`[!] Camera error: ${err.message}`));
+    }
+
+    function scanFrame() {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0);
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, canvas.width, canvas.height);
+        if (code) {
+          log(`[+] Code detected: ${code.data}`);
+          crackQRCode(code.data);
+        }
+      }
+      requestAnimationFrame(scanFrame);
+    }
+
+    function crackQRCode(data) {
+      if (data.includes('LIME')) {
+        log('[*] Lime QR Code cracked! ID: ' + data);
+      } else {
+        log('[*] Unknown code scanned: ' + data);
+      }
+    }
+
+    async function dumpFirmware() {
+      log('[*] Initiating firmware dump...');
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ['device_information']
+        });
+        const server = await device.gatt.connect();
+        const infoService = await server.getPrimaryService('device_information');
+
+        const chars = await infoService.getCharacteristics();
+        for (let char of chars) {
+          const val = await char.readValue();
+          const decoder = new TextDecoder('utf-8');
+          log(`[+] ${char.uuid}: ${decoder.decode(val)}`);
+        }
+        log('[+] Firmware dump completed. Save output manually.');
+      } catch (e) {
+        log(`[!] Firmware dump failed: ${e.message}`);
+      }
+    }
+
+    function uploadFirmware() {
+      const file = document.getElementById('firmwareFile').files[0];
+      if (!file) return log('[!] No firmware file selected.');
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        firmwareData = new Uint8Array(e.target.result);
+        log(`[+] Firmware file loaded (${firmwareData.length} bytes)`);
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    async function injectFirmware() {
+      if (!firmwareData) {
+        log('[-] No firmware loaded.');
+        return;
+      }
+
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ['device_information']
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService('device_information');
+        const characteristics = await service.getCharacteristics();
+
+        for (let char of characteristics) {
+          if (char.properties.write) {
+            await char.writeValue(firmwareData);
+            log(`[+] Firmware injected to ${char.uuid}`);
+            return;
+          }
+        }
+        log('[-] No writable characteristic found.');
+      } catch (e) {
+        log(`[!] Injection failed: ${e.message}`);
+      }
+    }
+  </script></body>
+  </html>
